@@ -91,6 +91,50 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract(args: argparse.Namespace) -> int:
+    """Extract preferences using LLM."""
+    from src.db.database import get_database
+    from src.analysis.llm_extractor import (
+        extract_preferences_from_db,
+        save_extracted_preferences,
+    )
+
+    config_path = Path(args.config) if args.config else None
+    settings = get_settings(config_path)
+
+    db = get_database(settings.database.path)
+
+    provider = args.provider
+    batch_size = args.batch_size
+    limit = args.limit if args.limit > 0 else None
+
+    print(f"Claude Reinforcement - LLM Preference Extraction")
+    print("=" * 40)
+    print(f"  Provider: {provider}")
+    print(f"  Batch size: {batch_size}")
+    print(f"  Limit: {limit or 'all'}")
+    print()
+
+    preferences = extract_preferences_from_db(
+        db,
+        provider=provider,
+        batch_size=batch_size,
+        limit=limit,
+    )
+
+    print(f"\nExtracted {len(preferences)} preferences:")
+    for pref in preferences:
+        print(f"  [{pref.preference_type}] {pref.preference_text} (confidence: {pref.confidence:.2f})")
+
+    if preferences and not args.dry_run:
+        saved = save_extracted_preferences(db, preferences)
+        print(f"\nSaved {saved} preferences to review queue.")
+    elif args.dry_run:
+        print("\n(Dry run - not saved)")
+
+    return 0
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -117,6 +161,35 @@ def main() -> int:
     # Stats command
     stats_parser = subparsers.add_parser("stats", help="Show statistics")
 
+    # Extract command (LLM-based)
+    extract_parser = subparsers.add_parser(
+        "extract",
+        help="Extract preferences using LLM"
+    )
+    extract_parser.add_argument(
+        "-p", "--provider",
+        choices=["anthropic", "openai"],
+        default="anthropic",
+        help="LLM provider to use (default: anthropic)",
+    )
+    extract_parser.add_argument(
+        "-b", "--batch-size",
+        type=int,
+        default=20,
+        help="Messages per API call (default: 20)",
+    )
+    extract_parser.add_argument(
+        "-l", "--limit",
+        type=int,
+        default=0,
+        help="Max messages to process (default: 0 = all)",
+    )
+    extract_parser.add_argument(
+        "-n", "--dry-run",
+        action="store_true",
+        help="Don't save results to database",
+    )
+
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -127,6 +200,8 @@ def main() -> int:
         return cmd_init(args)
     elif args.command == "stats":
         return cmd_stats(args)
+    elif args.command == "extract":
+        return cmd_extract(args)
     else:
         parser.print_help()
         return 0

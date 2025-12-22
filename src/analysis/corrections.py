@@ -1,4 +1,4 @@
-"""Correction detection from conversation patterns."""
+"""Preference and correction detection from conversation patterns."""
 
 import re
 from dataclasses import dataclass
@@ -12,12 +12,12 @@ from src.db.database import Database
 
 @dataclass
 class DetectedCorrection:
-    """A detected correction from a conversation."""
+    """A detected preference or correction from a conversation."""
 
     id: str
     message_id: str
     target_msg_id: str | None
-    correction_type: str  # 'explicit' | 'refinement' | 'repeated_request'
+    correction_type: str  # 'explicit' | 'preference' | 'workflow' | 'tool' | 'documentation'
     user_message: str
     assistant_message: str | None
     extracted_rule: str | None
@@ -28,40 +28,66 @@ class DetectedCorrection:
     file_touched: str | None = None
 
 
-# Patterns that indicate explicit corrections
-CORRECTION_PATTERNS = [
+# Patterns that indicate preferences/corrections
+# Format: (pattern, type, base_confidence)
+PREFERENCE_PATTERNS = [
+    # === CORRECTIONS (something went wrong) ===
     # Direct negation
-    (r"(?i)^no[,.]?\s+(.+)", "explicit", 0.9),
-    (r"(?i)^wrong[,.]?\s+(.+)", "explicit", 0.9),
-    (r"(?i)^incorrect[,.]?\s+(.+)", "explicit", 0.85),
-    (r"(?i)^that'?s?\s+not\s+(right|correct|what)", "explicit", 0.85),
+    (r"(?i)^no[,.]?\s+(.+)", "correction", 0.9),
+    (r"(?i)^wrong[,.]?\s+(.+)", "correction", 0.9),
+    (r"(?i)^incorrect[,.]?\s+(.+)", "correction", 0.85),
+    (r"(?i)^that'?s?\s+not\s+(right|correct|what)", "correction", 0.85),
 
-    # Instruction patterns
-    (r"(?i)don'?t\s+(.+)", "explicit", 0.8),
-    (r"(?i)never\s+(.+)", "explicit", 0.85),
-    (r"(?i)always\s+(.+)", "explicit", 0.85),
-    (r"(?i)please\s+(always|never|don'?t)\s+(.+)", "explicit", 0.85),
+    # Instruction corrections
+    (r"(?i)don'?t\s+(.+)", "correction", 0.8),
+    (r"(?i)never\s+(.+)", "correction", 0.85),
+    (r"(?i)^why\s+(didn'?t|don'?t)\s+you", "correction", 0.7),
 
-    # Preference patterns
+    # === TOOL PREFERENCES ===
+    # "use X" / "use X for Y" / "you should use X"
+    (r"(?i)(?:you\s+should\s+)?use\s+(\w+)(?:\s+for\s+|\s+when\s+|\s+instead)", "tool", 0.85),
+    (r"(?i)(?:please\s+)?use\s+(\w+)\s+(?:not|instead\s+of)\s+(\w+)", "tool", 0.9),
+    (r"(?i)for\s+python\s+(?:projects?\s+)?(?:you\s+should\s+)?(?:always\s+)?use\s+(\w+)", "tool", 0.9),
+    (r"(?i)(?:always\s+)?use\s+(uv|pip|poetry|conda|npm|yarn|pnpm|bun)", "tool", 0.85),
+
+    # === WORKFLOW PREFERENCES ===
+    # "always X" / "make sure to X" / "remember to X"
+    (r"(?i)always\s+(.+)", "workflow", 0.85),
+    (r"(?i)make\s+sure\s+(?:to\s+|you\s+)?(.+)", "workflow", 0.8),
+    (r"(?i)remember\s+to\s+(.+)", "workflow", 0.8),
+    (r"(?i)you\s+should\s+(?:always\s+)?(.+)", "workflow", 0.75),
+    (r"(?i)please\s+(?:always\s+)?(.+?)(?:\s+when|\s+for|\s+before|\s+after|$)", "workflow", 0.7),
+
+    # === DOCUMENTATION PREFERENCES ===
+    # Update/add to readme, changelog, etc.
+    (r"(?i)(?:please\s+)?(?:also\s+)?update\s+(?:the\s+)?(readme|changelog|history|documentation|docs)", "documentation", 0.85),
+    (r"(?i)(?:please\s+)?(?:also\s+)?add\s+(?:this\s+)?(?:to\s+)?(?:the\s+)?(readme|changelog|history|documentation|docs)", "documentation", 0.85),
+    (r"(?i)(?:please\s+)?document\s+(?:this|the|your)", "documentation", 0.8),
+    (r"(?i)(?:please\s+)?(?:also\s+)?write\s+(?:a\s+)?(?:the\s+)?(readme|documentation|docs)", "documentation", 0.8),
+    (r"(?i)keep\s+(?:the\s+)?(readme|changelog|documentation|docs)\s+(?:up\s+to\s+date|updated)", "documentation", 0.85),
+
+    # === STYLE PREFERENCES ===
     (r"(?i)i\s+prefer\s+(.+)", "preference", 0.75),
-    (r"(?i)use\s+(.+)\s+instead(\s+of\s+.+)?", "explicit", 0.8),
-    (r"(?i)instead\s+of\s+(.+),?\s+(use|do)\s+(.+)", "explicit", 0.8),
+    (r"(?i)use\s+(.+)\s+instead(\s+of\s+.+)?", "preference", 0.8),
+    (r"(?i)instead\s+of\s+(.+),?\s+(use|do)\s+(.+)", "preference", 0.8),
 
     # Refinement patterns
     (r"(?i)make\s+it\s+(more|less)\s+(.+)", "refinement", 0.6),
     (r"(?i)too\s+(verbose|complex|long|short|simple)", "refinement", 0.65),
-    (r"(?i)simpler", "refinement", 0.6),
-    (r"(?i)more\s+concise", "refinement", 0.65),
+    (r"(?i)(?:be\s+)?more\s+concise", "refinement", 0.65),
 
-    # Question-based corrections (repeated requests)
-    (r"(?i)^did\s+you\s+(try|check|run|test|render)", "repeated_request", 0.5),
-    (r"(?i)^can\s+you\s+(also|actually|please)", "refinement", 0.5),
-    (r"(?i)^why\s+(didn'?t|don'?t)\s+you", "explicit", 0.7),
+    # === REPEATED REQUESTS (hints at missing workflow) ===
+    (r"(?i)^did\s+you\s+(try|check|run|test|render|update)", "reminder", 0.6),
+    (r"(?i)^can\s+you\s+(?:also|actually|please)", "reminder", 0.5),
 
-    # File-specific patterns
-    (r"(?i)when\s+working\s+(with|on)\s+(\.\w+)\s+files?,?\s+(.+)", "explicit", 0.8),
-    (r"(?i)for\s+(\.\w+)\s+files?,?\s+(.+)", "explicit", 0.75),
+    # === FILE-SPECIFIC PATTERNS ===
+    (r"(?i)when\s+working\s+(?:with|on)\s+(\.\w+)\s+files?,?\s+(.+)", "file_specific", 0.8),
+    (r"(?i)for\s+(\.\w+)\s+files?,?\s+(.+)", "file_specific", 0.75),
+    (r"(?i)in\s+(\.\w+)\s+files?,?\s+(?:always\s+)?(.+)", "file_specific", 0.75),
 ]
+
+# Legacy alias
+CORRECTION_PATTERNS = PREFERENCE_PATTERNS
 
 # Patterns that indicate positive feedback (not corrections)
 POSITIVE_PATTERNS = [
@@ -72,12 +98,70 @@ POSITIVE_PATTERNS = [
     r"(?i)^(lgtm|looks\s+good)",
 ]
 
+# Patterns that indicate pasted/noise content (not actual preferences)
+NOISE_INDICATORS = [
+    # Pasted logs/output
+    r"^\d{4}-\d{2}-\d{2}",  # Timestamp at start (log output)
+    r"^[A-Z][a-z]+\s+\d{1,2},\s+\d{4}",  # "Nov 29, 2025" date format
+    r"^\s*\d+\.\d+\.\d+",  # Version numbers at start
+    r"^(Error|Warning|INFO|DEBUG|WARN):",  # Log levels
+    r"^\s*(GET|POST|PUT|DELETE|PATCH)\s+/",  # HTTP requests
+    r"Traceback \(most recent call last\)",  # Python tracebacks
+    r"^\s*at\s+\w+\.\w+\(",  # Stack traces
+    r"^npm\s+(ERR|WARN)!",  # npm output
+
+    # UI/menu content
+    r"^(Start|File|Edit|View|Help)\s*$",  # Menu items
+    r"^\s*(Open|Save|Close|New)\s+(File|Folder)",  # File menu items
+    r"^Recent\s*$",  # UI element
+    r"Walkthroughs",  # VS Code UI
+    r"^\s*\[\s*\d+\s*\]",  # Numbered output lines
+
+    # System content
+    r"<system-reminder>",  # System messages
+    r"^Base directory for this skill:",  # Skill file content
+    r"^# .{50,}",  # Very long markdown headers (likely pasted docs)
+
+    # Deploy/CI output
+    r"(Starting|Stopping)\s+Container",
+    r"Successfully\s+(built|deployed|installed)",
+    r"Downloading\s+\w+",
+    r"^\s*━+",  # Progress bars
+
+    # Very short fragments that aren't actionable
+    r"^.{1,15}$",  # Too short to be meaningful (unless specific)
+]
+
 
 def is_positive_feedback(text: str) -> bool:
     """Check if a message is positive feedback."""
     for pattern in POSITIVE_PATTERNS:
         if re.search(pattern, text.strip()):
             return True
+    return False
+
+
+def is_noise_content(text: str) -> bool:
+    """Check if a message looks like pasted/noise content rather than a preference."""
+    # Skip very long messages (likely pasted content)
+    if len(text) > 1000:
+        return True
+
+    # Check for noise indicators
+    for pattern in NOISE_INDICATORS:
+        if re.search(pattern, text, re.MULTILINE):
+            return True
+
+    # Check for high ratio of special characters (likely code/logs)
+    special_chars = sum(1 for c in text if c in '{}[]()<>|&;$`\\')
+    if len(text) > 50 and special_chars / len(text) > 0.15:
+        return True
+
+    # Check for many newlines (likely pasted multi-line content)
+    newline_count = text.count('\n')
+    if newline_count > 10:
+        return True
+
     return False
 
 
@@ -181,8 +265,13 @@ def detect_corrections_in_conversation(
             prev_assistant_msg = None
             continue
 
-        # Check for correction patterns
-        for pattern, correction_type, base_confidence in CORRECTION_PATTERNS:
+        # Skip noise/pasted content
+        if is_noise_content(content):
+            prev_assistant_msg = None
+            continue
+
+        # Check for preference patterns
+        for pattern, correction_type, base_confidence in PREFERENCE_PATTERNS:
             match = re.search(pattern, content)
             if match:
                 # Extract what we can

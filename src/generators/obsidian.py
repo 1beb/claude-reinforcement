@@ -40,7 +40,8 @@ def format_file_types(file_types: list[str]) -> str:
 
 def format_evidence_snippet(evidence: dict) -> str:
     """Format a single evidence snippet as markdown."""
-    project = evidence.get("project_path", "unknown").split("/")[-1]
+    project_path = evidence.get("project_path") or "unknown"
+    project = project_path.split("/")[-1]
     timestamp = evidence.get("timestamp", "")
 
     # Parse timestamp to get date
