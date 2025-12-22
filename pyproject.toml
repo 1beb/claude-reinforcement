@@ -3,7 +3,7 @@ name = "claude-reinforcement"
 version = "0.1.0"
 description = "Learn from Claude Code conversations to improve CLAUDE.md instructions"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "Your Name" }]
 

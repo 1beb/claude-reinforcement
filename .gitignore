@@ -30,3 +30,9 @@ data/
 dist/
 build/
 *.egg-info/
+
+# Config (use config.example.yaml)
+config/config.yaml
+
+# uv lockfile
+uv.lock

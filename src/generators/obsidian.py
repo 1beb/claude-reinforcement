@@ -245,10 +245,11 @@ def generate_digest_note(db: Database) -> str:
     # Get top correction patterns
     top_patterns = db.fetchall(
         """
-        SELECT correction_type, COUNT(*) as cnt
-        FROM corrections
-        WHERE timestamp >= ?
-        GROUP BY correction_type
+        SELECT c.correction_type, COUNT(*) as cnt
+        FROM corrections c
+        JOIN messages m ON c.message_id = m.id
+        WHERE m.timestamp >= ?
+        GROUP BY c.correction_type
         ORDER BY cnt DESC
         LIMIT 5
         """,
