@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  claude-reinforcement:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: claude-reinforcement
+    restart: unless-stopped
+    volumes:
+      # Database storage
+      - ../data:/data
+
+      # Configuration
+      - ../config:/config:ro
+
+      # Obsidian vault output (adjust path as needed)
+      - ~/pCloudDrive/Personal/Obsidian/personal/AI-improvement:/obsidian
+
+      # Claude projects data (read-only, from pCloud sync)
+      # Adjust this path to where your pCloud syncs Claude data
+      - ~/.claude/projects:/claude-data:ro
+
+    environment:
+      - CONFIG_PATH=/config/config.yaml
+
+    # Run daily at 3am via cron on host, or use:
+    # command: ["python", "-m", "src.cli", "run", "-c", "/config/config.yaml"]
+
+  # Optional: scheduled runner using ofelia
+  # scheduler:
+  #   image: mcuadros/ofelia:latest
+  #   depends_on:
+  #     - claude-reinforcement
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #   labels:
+  #     ofelia.job-exec.reinforcement.schedule: "0 3 * * *"
+  #     ofelia.job-exec.reinforcement.container: "claude-reinforcement"
+  #     ofelia.job-exec.reinforcement.command: "python -m src.cli run -c /config/config.yaml"

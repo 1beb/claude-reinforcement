@@ -1,0 +1,47 @@
+server:
+  host: 0.0.0.0
+  port: 8420
+
+database:
+  path: /data/claude-reinforcement.db
+
+obsidian:
+  vault_path: ~/pCloudDrive/Personal/Obsidian/personal
+  folder: AI-improvement
+
+sync:
+  claude_projects_path: /claude-data  # pCloud mounted volume
+
+analysis:
+  auto_approve_threshold: 0.85
+  review_threshold: 0.5
+  batch_schedule: "0 3 * * *"  # 3am daily
+
+project_detection:
+  patterns:
+    django:
+      - "manage.py"
+      - "settings.py"
+      - "**/urls.py"
+    react:
+      - 'package.json + "react"'
+      - "src/App.{jsx,tsx}"
+    quarto:
+      - "*.qmd"
+      - "_quarto.yml"
+    r-package:
+      - "DESCRIPTION"
+      - "NAMESPACE"
+      - "R/*.R"
+    python:
+      - "pyproject.toml"
+      - "setup.py"
+      - "requirements.txt"
+    typescript:
+      - "tsconfig.json"
+
+devices:
+  - name: desktop
+    id: desktop-main
+  - name: laptop
+    id: laptop-work
