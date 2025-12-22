@@ -1,0 +1,32 @@
+# Reference repos (cloned for research)
+Claude-CursorMemoryMCP/
+mcp-memory-keeper/
+mcp-memory-service/
+mcp-servers-official/
+rag-memory-mcp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data
+*.db
+data/
+
+# Build
+dist/
+build/
+*.egg-info/
