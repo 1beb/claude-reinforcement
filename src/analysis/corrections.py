@@ -110,6 +110,13 @@ NOISE_INDICATORS = [
     r"^\s*at\s+\w+\.\w+\(",  # Stack traces
     r"^npm\s+(ERR|WARN)!",  # npm output
 
+    # Debugging context (user pasting errors)
+    r"(?i)I'?m\s+(?:still\s+)?getting\s+(?:a\s+)?(?:an?\s+)?(?:error|exception|\d{3})",
+    r"(?i)getting\s+a\s+\d{3}",  # "getting a 401"
+    r"@\w+/\w+:dev:",  # npm workspace dev output
+    r"✓\s+(?:Starting|Compiled|Ready)",  # Build output
+    r"○\s+Compiling",  # Next.js compiling
+
     # UI/menu content
     r"^(Start|File|Edit|View|Help)\s*$",  # Menu items
     r"^\s*(Open|Save|Close|New)\s+(File|Folder)",  # File menu items
@@ -117,8 +124,12 @@ NOISE_INDICATORS = [
     r"Walkthroughs",  # VS Code UI
     r"^\s*\[\s*\d+\s*\]",  # Numbered output lines
 
-    # System content
+    # System content (IDE/Claude Code injected messages)
     r"<system-reminder>",  # System messages
+    r"<ide_opened_file>",  # IDE file open notifications
+    r"<ide_selection>",  # IDE selection context
+    r"<ide_",  # Catch-all for other IDE tags
+    r"<user-prompt-submit-hook>",  # Hook messages
     r"^Base directory for this skill:",  # Skill file content
     r"^# .{50,}",  # Very long markdown headers (likely pasted docs)
 
@@ -165,31 +176,113 @@ def is_noise_content(text: str) -> bool:
     return False
 
 
+def is_task_request(text: str) -> bool:
+    """Check if a message is a task request rather than behavioral feedback."""
+    # Patterns for task requests (not behavioral guidance)
+    task_patterns = [
+        # Direct requests anywhere in message
+        r"(?i)(?:can you|could you|would you|please)\s+(?:also\s+)?(?:update|add|create|write|fix|change|modify|remove|delete|run|test|check|show|make|build)",
+        r"(?i)(?:I need|I want|I'd like)\s+(?:you\s+)?(?:to\s+)?",
+        r"(?i)(?:let's|lets)\s+(?:add|create|write|fix|change|modify|build|test|run|make\s+sure|check)",
+        # Imperative task instructions
+        r"(?i)^(?:update|add|create|write|fix|change|modify|remove|delete|run|test)\s+",
+        # "this" references specific context
+        r"(?i)write\s+this\s+as\s+",
+        r"(?i)change\s+this\s+to\s+",
+        r"(?i)make\s+this\s+",
+        r"(?i)make\s+sure\s+(?:this|that|it)",
+    ]
+    for pattern in task_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
+def is_behavioral_preference(text: str) -> bool:
+    """Check if text looks like a generalizable behavioral preference vs task-specific."""
+    # Questions are not preferences (check only at end of sentence)
+    if text.strip().endswith("?"):
+        return False
+
+    # Very short texts are usually fragments
+    if len(text.strip()) < 20:
+        return False
+
+    behavioral_signals = [
+        r"(?i)\balways\b",
+        r"(?i)\bnever\b",
+        r"(?i)\bwhen\s+working\b",
+        r"(?i)\bfor\s+\w+\s+(?:projects?|files?)\b",
+        r"(?i)\bin\s+(?:all|every)\b",
+        r"(?i)\bby\s+default\b",
+        r"(?i)\bprefer\b",
+        r"(?i)\bgoing\s+forward\b",
+        r"(?i)\bfrom\s+now\s+on\b",
+        r"(?i)\bmake\s+sure\s+to\b",
+        r"(?i)\bremember\s+to\b",
+        r"(?i)\bshould\s+(?:always|never)\b",
+        # Corrections about behavior (not task-specific)
+        r"(?i)^(?:don'?t|never)\s+\w+\s+\w+",  # "Don't use emojis" etc.
+        r"(?i)\binstead\s+of\b.*\bfor\b",  # "instead of X for Y projects"
+    ]
+    for pattern in behavioral_signals:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
 def extract_correction_rule(user_message: str) -> str | None:
     """Try to extract a rule from a correction message."""
     text = user_message.strip()
 
-    # Try to extract the actionable part
+    # Skip task requests - these are not behavioral feedback
+    if is_task_request(text):
+        return None
+
+    # Must have behavioral signals
+    if not is_behavioral_preference(text):
+        return None
+
+    # Check if message contains negation anywhere - if so, preserve full context
+    # "please don't guess" should NOT become "guess"
+    negation_patterns = [
+        r"(?i)\bdon'?t\s+\w+",
+        r"(?i)\bnever\s+\w+",
+        r"(?i)\bno\s+need\b",
+        r"(?i)\bnot\s+\w+",
+        r"(?i)\bavoid\s+\w+",
+    ]
+    has_negation = any(re.search(p, text) for p in negation_patterns)
+
+    if has_negation:
+        # Return the full message to preserve negation context
+        if len(text) < 200:
+            return text
+        # For longer messages, try to extract the negation clause
+        for pattern in negation_patterns:
+            match = re.search(pattern + r"[^.!?]*", text)
+            if match:
+                clause = match.group(0)
+                if len(clause) > 15:
+                    return clause.strip()
+        return None
+
+    # Try to extract the actionable part for non-negation patterns
     for pattern, _, _ in CORRECTION_PATTERNS:
         match = re.search(pattern, text)
         if match:
-            # Get the captured groups
             groups = match.groups()
             if groups:
-                # Return the most substantive captured group
                 for group in groups:
-                    if group and len(group) > 10:
+                    if group and len(group) > 15:
                         return group.strip()
-                # Fall back to first non-empty group
-                for group in groups:
-                    if group:
-                        return group.strip()
+                # If captured group is too short, return full message if reasonable length
+                if len(text) < 200:
+                    return text
+                return None
 
-    # If no pattern matched, return the whole message if it's instruction-like
-    if len(text) < 200 and any(
-        keyword in text.lower()
-        for keyword in ["always", "never", "don't", "use", "prefer", "should"]
-    ):
+    # If no pattern matched but has behavioral signals, return the whole message
+    if len(text) < 200:
         return text
 
     return None
@@ -276,6 +369,11 @@ def detect_corrections_in_conversation(
             if match:
                 # Extract what we can
                 extracted_rule = extract_correction_rule(content)
+
+                # Skip if no actionable rule was extracted
+                if not extracted_rule:
+                    continue
+
                 file_touched = extract_file_reference(content)
 
                 # Adjust confidence based on context
@@ -286,6 +384,10 @@ def detect_corrections_in_conversation(
                 if file_touched:
                     # Higher confidence if file-specific
                     confidence += 0.05
+
+                # Cap single-occurrence confidence - real confidence comes from repetition
+                # A single observation should never be above 0.65
+                confidence = min(confidence, 0.65)
 
                 corrections.append(
                     DetectedCorrection(

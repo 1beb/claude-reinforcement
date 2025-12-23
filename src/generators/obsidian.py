@@ -185,25 +185,79 @@ def generate_pending_review_note(
     # Sort by confidence
     items.sort(key=lambda x: x.confidence, reverse=True)
 
-    # Count categories
+    # Group items by category
+    category_labels = {
+        "workflow": "Workflow & Process",
+        "tool": "Software & Tools",
+        "software": "Software & Tools",
+        "software_preferences": "Software & Tools",
+        "style": "UI & Formatting",
+        "documentation": "Documentation",
+        "testing": "Testing & Quality",
+        "correction": "Best Practices",
+        "preference": "General Preferences",
+    }
+
+    # Group items
+    grouped: dict[str, list[ReviewItem]] = {}
+    for item in items:
+        # Normalize category
+        cat = item.rule_type.lower() if item.rule_type else "other"
+        label = category_labels.get(cat, "Other")
+
+        if label not in grouped:
+            grouped[label] = []
+        grouped[label].append(item)
+
+    # Define category order
+    category_order = [
+        "Workflow & Process",
+        "Software & Tools",
+        "UI & Formatting",
+        "Testing & Quality",
+        "Documentation",
+        "Best Practices",
+        "General Preferences",
+        "Other",
+    ]
+
+    # Count stats
     high_confidence = sum(1 for i in items if i.confidence >= 0.85)
     needs_review = len(items) - high_confidence
 
-    # Generate markdown
+    # Generate markdown with grouped sections
     content = f"""# Pending Rule Reviews - {today}
 
 ## Summary
 
-- {len(items)} rules pending review
+- **{len(items)} rules** pending review
 - {high_confidence} high confidence (auto-approve candidates)
-- {needs_review} need review
+- {needs_review} need manual review
 
----
+### By Category
 
 """
 
-    for idx, item in enumerate(items, 1):
-        content += generate_review_item_markdown(item, idx)
+    # Add category summary
+    for cat in category_order:
+        if cat in grouped:
+            count = len(grouped[cat])
+            content += f"- **{cat}**: {count} rule{'s' if count != 1 else ''}\n"
+
+    content += "\n---\n\n"
+
+    # Generate sections by category
+    rule_idx = 1
+    for cat in category_order:
+        if cat not in grouped:
+            continue
+
+        cat_items = grouped[cat]
+        content += f"# {cat}\n\n"
+
+        for item in cat_items:
+            content += generate_review_item_markdown(item, rule_idx)
+            rule_idx += 1
 
     return content, items
 

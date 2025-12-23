@@ -13,7 +13,8 @@ from src.analysis.corrections import detect_all_corrections, save_correction
 from src.analysis.preferences import process_corrections_to_preferences
 from src.generators.obsidian import write_obsidian_notes
 from src.generators.review_processor import process_review_files, add_to_review_queue
-from src.generators.claude_md import update_all_claude_md_files
+from src.generators.claude_md import update_all_claude_md_files, update_all_rules_modern
+from src.generators.skills import update_all_skills
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,13 @@ class PipelineResult:
     rules_approved: int
     obsidian_files_written: int
     claude_md_updated: int
-    errors: list[str]
+    rules_files_written: int = 0  # Modern .claude/rules/ files
+    skills_generated: int = 0  # Auto-generated skills
+    errors: list[str] = None
+
+    def __post_init__(self):
+        if self.errors is None:
+            self.errors = []
 
 
 def run_pipeline(settings: Settings) -> PipelineResult:
@@ -158,7 +165,7 @@ def run_pipeline(settings: Settings) -> PipelineResult:
         errors.append(f"Obsidian generation error: {e}")
         logger.error(f"  Error: {e}")
 
-    # Step 7: Update CLAUDE.md files
+    # Step 7: Update CLAUDE.md files (legacy mode)
     logger.info("Step 7: Updating CLAUDE.md files...")
     try:
         global_claude_dir = Path.home() / ".claude"
@@ -170,6 +177,36 @@ def run_pipeline(settings: Settings) -> PipelineResult:
         )
     except Exception as e:
         errors.append(f"CLAUDE.md update error: {e}")
+        logger.error(f"  Error: {e}")
+
+    # Step 8: Generate modern .claude/rules/ files
+    rules_files_written = 0
+    logger.info("Step 8: Generating modern .claude/rules/ files...")
+    try:
+        global_claude_dir = Path.home() / ".claude"
+        rules_counts = update_all_rules_modern(db, global_claude_dir)
+        rules_files_written = rules_counts["global_files"] + rules_counts["project_files"]
+        logger.info(
+            f"  Wrote {rules_counts['global_files']} global, "
+            f"{rules_counts['project_files']} project rule files"
+        )
+    except Exception as e:
+        errors.append(f"Rules generation error: {e}")
+        logger.error(f"  Error: {e}")
+
+    # Step 9: Generate skills from workflow patterns
+    skills_generated = 0
+    logger.info("Step 9: Generating skills from workflow patterns...")
+    try:
+        global_claude_dir = Path.home() / ".claude"
+        skills_counts = update_all_skills(db, global_claude_dir)
+        skills_generated = skills_counts["global_skills"] + skills_counts["project_skills"]
+        logger.info(
+            f"  Generated {skills_counts['global_skills']} global, "
+            f"{skills_counts['project_skills']} project skills"
+        )
+    except Exception as e:
+        errors.append(f"Skills generation error: {e}")
         logger.error(f"  Error: {e}")
 
     completed_at = datetime.utcnow().isoformat()
@@ -186,6 +223,8 @@ def run_pipeline(settings: Settings) -> PipelineResult:
         rules_approved=rules_approved,
         obsidian_files_written=obsidian_files,
         claude_md_updated=claude_md_updated,
+        rules_files_written=rules_files_written,
+        skills_generated=skills_generated,
         errors=errors,
     )
 

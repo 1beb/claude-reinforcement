@@ -38,6 +38,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"  Rules approved: {result.rules_approved}")
     print(f"  Obsidian files: {result.obsidian_files_written}")
     print(f"  CLAUDE.md updated: {result.claude_md_updated}")
+    print(f"  Rules files written: {result.rules_files_written}")
+    print(f"  Skills generated: {result.skills_generated}")
 
     if result.errors:
         print("\nErrors:")
@@ -135,6 +137,85 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_summarize(args: argparse.Namespace) -> int:
+    """Summarize conversations to extract preferences."""
+    from src.db.database import get_database
+    from src.analysis.conversation_summarizer import (
+        summarize_all_conversations,
+        save_summary_preferences,
+    )
+
+    config_path = Path(args.config) if args.config else None
+    settings = get_settings(config_path)
+
+    db = get_database(settings.database.path)
+
+    print("Claude Reinforcement - Conversation Summarization")
+    print("=" * 40)
+    print(f"Processing up to {args.limit} conversations...")
+
+    summaries = list(summarize_all_conversations(db, limit=args.limit))
+
+    print(f"\nFound preferences in {len(summaries)} conversations:")
+    total_prefs = 0
+    total_corrs = 0
+
+    for summary in summaries:
+        if summary.preferences or summary.corrections:
+            print(f"\n[{summary.project_name}] {summary.goal[:60]}...")
+            for pref in summary.preferences:
+                print(f"  + [{pref.get('category', '?')}] {pref.get('rule', '')[:50]}")
+                total_prefs += 1
+            for corr in summary.corrections:
+                print(f"  ! [correction] {corr.get('rule', '')[:50]}")
+                total_corrs += 1
+
+    print(f"\nTotal: {total_prefs} preferences, {total_corrs} corrections")
+
+    if summaries and not args.dry_run:
+        saved = save_summary_preferences(db, summaries)
+        print(f"Saved {saved} items to review queue.")
+    elif args.dry_run:
+        print("(Dry run - not saved)")
+
+    return 0
+
+
+def cmd_refine(args: argparse.Namespace) -> int:
+    """Refine detected corrections into proper rules using LLM."""
+    from src.db.database import get_database
+    from src.analysis.rule_refiner import refine_corrections, save_refined_rules
+
+    config_path = Path(args.config) if args.config else None
+    settings = get_settings(config_path)
+
+    db = get_database(settings.database.path)
+
+    print("Claude Reinforcement - Rule Refinement")
+    print("=" * 40)
+
+    rules = refine_corrections(db)
+
+    print(f"\nRefined {len(rules)} rules:")
+    for i, rule in enumerate(rules, 1):
+        scope = rule.project_scope or "global"
+        if rule.project_scope:
+            # Extract just the project name
+            scope = rule.project_scope.rstrip("/").split("/")[-1]
+        print(f"\n{i}. [{rule.category}] {rule.rule_text[:60]}...")
+        print(f"   Scope: {scope} | Confidence: {rule.confidence:.0%}")
+        print(f"   File types: {rule.file_types or 'all'}")
+        print(f"   Based on {rule.occurrence_count} message(s)")
+
+    if rules and not args.dry_run:
+        saved = save_refined_rules(db, rules)
+        print(f"\nSaved {saved} refined rules to review queue.")
+    elif args.dry_run:
+        print("\n(Dry run - not saved)")
+
+    return 0
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -190,6 +271,34 @@ def main() -> int:
         help="Don't save results to database",
     )
 
+    # Refine command (LLM-based rule refinement)
+    refine_parser = subparsers.add_parser(
+        "refine",
+        help="Refine detected corrections into proper rules using LLM"
+    )
+    refine_parser.add_argument(
+        "-n", "--dry-run",
+        action="store_true",
+        help="Don't save results to database",
+    )
+
+    # Summarize command (conversation-level extraction)
+    summarize_parser = subparsers.add_parser(
+        "summarize",
+        help="Summarize conversations to extract preferences (LLM-based)"
+    )
+    summarize_parser.add_argument(
+        "-l", "--limit",
+        type=int,
+        default=10,
+        help="Max conversations to process (default: 10)",
+    )
+    summarize_parser.add_argument(
+        "-n", "--dry-run",
+        action="store_true",
+        help="Don't save results to database",
+    )
+
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -202,6 +311,10 @@ def main() -> int:
         return cmd_stats(args)
     elif args.command == "extract":
         return cmd_extract(args)
+    elif args.command == "refine":
+        return cmd_refine(args)
+    elif args.command == "summarize":
+        return cmd_summarize(args)
     else:
         parser.print_help()
         return 0

@@ -46,9 +46,21 @@ PREFERENCE_CATEGORIES = {
         r"(?i)(naming|convention|variable)",
     ],
     "workflow": [
-        r"(?i)(test|build|run|render|compile|deploy)",
         r"(?i)(commit|git|branch|merge)",
         r"(?i)(step|process|workflow|procedure)",
+        r"(?i)(build|run|render|compile|deploy)",
+    ],
+    "testing": [
+        r"(?i)(test|spec|assert|expect|mock|fixture)",
+        r"(?i)(coverage|tdd|unit\s*test|integration\s*test)",
+        r"(?i)(pytest|jest|vitest|mocha|rspec)",
+    ],
+    "software_preferences": [
+        r"(?i)\b(use|prefer|install|with)\s+(uv|pip|poetry|conda)\b",
+        r"(?i)\b(npm|yarn|pnpm|bun)\b",
+        r"(?i)\b(nextjs|next\.js|react|vue|svelte|angular)\b",
+        r"(?i)\b(django|flask|fastapi|express)\b",
+        r"(?i)\b(postgres|mysql|sqlite|mongodb|redis)\b",
     ],
     "communication": [
         r"(?i)(verbose|concise|brief|detailed)",
